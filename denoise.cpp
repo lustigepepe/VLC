@@ -24,25 +24,26 @@
 
 // declaration the methode the important methode, using by VLC
 static int Open (vlc_object_t *);
+static void Close (vlc_object_t *);
 static block_t* Process (filter_t *, block_t *);
 
 // Module descriptor
 vlc_module_begin ()
-    set_shortname (N_("Denoise"))
-    set_description (N_("Denoise that Song"))
-    // kind of audio / #define  CAT_AUDIO   2
-    set_category (CAT_AUDIO)
-    set_subcategory (SUBCAT_AUDIO_AFILTER)
-    // kind of module
-    set_capability ("audio filter", 0)
-    set_callbacks (Open, NULL)
+set_shortname (N_("Denoise"))
+set_description (N_("Denoise that Song"))
+// kind of audio / #define  CAT_AUDIO   2
+set_category (CAT_AUDIO)
+set_subcategory (SUBCAT_AUDIO_AFILTER)
+// kind of module
+set_capability ("audio filter", 0)
+set_callbacks (Open, Close)
 vlc_module_end ()
 
 
-// Starts that module 
-static int Open (vlc_object_t *obj)
+// Start that module
+static int Open (vlc_object_t* obj)
 {
-    filter_t *filter = (filter_t *)obj;
+    filter_t* filter = (filter_t *)obj;
 
     if (filter->fmt_in.audio.i_channels != 2)
     {
@@ -50,9 +51,9 @@ static int Open (vlc_object_t *obj)
         return VLC_EGENERIC;
     }
 
-    // Allocate structure 
+    // Allocate structure && definate frameBuffer
     filter_sys_t* p_sys = filter->p_sys = new filter_sys_t;
-    if( !p_sys )
+    if (!p_sys)
         return VLC_ENOMEM;
 
     filter->fmt_in.audio.i_format = VLC_CODEC_FL32;
@@ -61,61 +62,67 @@ static int Open (vlc_object_t *obj)
     return VLC_SUCCESS;
 }
 
+static void Close (vlc_object_t* obj) {
+
+    filter_t* filter = (filter_t *)obj;
+    // free the your allocated memory
+    delete[] filter->p_sys;
+
+}
+
 
 // Main methode with the work
-static block_t* Process (filter_t *filter, block_t *block)
-{
+static block_t* Process (filter_t* filter, block_t* block) {
     // i_nb_samples get the size of sample
     const unsigned sampleSize = block->i_nb_samples;
     // create a size with a potenz of 2
-    int N = (int) createN(block->i_nb_samples);
+    int n = (int) createN(block->i_nb_samples);
     // the p_buffer have all audio data
-    float *spl = (float *)block->p_buffer;
-    float *temp_buffer_ = new float[N];
+    float* spl = (float *)block->p_buffer;
+    float* temp_buffer_ = new float[n];
 
 
     // real and imagin part/ for the fft
-    frequenzStruct *fftStruct = new frequenzStruct;
+    frequenzStruct* fftStruct = new frequenzStruct;
 
-    fftStruct->xr = new float[N];
-    fftStruct->xi = new float[N];
+    fftStruct->xr = new float[n];
+    fftStruct->xi = new float[n];
 
     // to get only one chanel
     unsigned mono = sampleSize * 2;
 
-    // fill the buffer with all data 
-    float* temp_buffer = fillBuffer(N, sampleSize, mono, temp_buffer_, spl);
+    // fill the buffer with all data
+    float* temp_buffer = fillBuffer(n, sampleSize, mono, temp_buffer_, spl);
 
 
     // build denoice mask
     // start with fft analyse
     // fill noise struct
-    frequenzStruct* fft_Struct = fillStruct(N, temp_buffer, fftStruct);
+    frequenzStruct* fft_Struct = fillStruct(n, temp_buffer, fftStruct);
     // sort the sampling points for the fft
-    frequenzStruct* fftStr = inversion(N, fft_Struct);
+    frequenzStruct* fftStr = inversion(n, fft_Struct);
     // transform samples to the frequenz Area
-    frequenzStruct* forNoiseMask = allInOnefft(N, fftStr, 0);
-    // create the noise - mask   
-    frequenzStruct* frequenzArea = fillNoiseMask(N, filter, forNoiseMask, 39);
+    frequenzStruct* forNoiseMask = allInOnefft(n, fftStr, 0);
+    // create the noise - mask
+    frequenzStruct* frequenzArea = fillNoiseMask(n, sampleSize, filter, forNoiseMask, 39);
 
     // if noise mask created -> start with denoise
-    // if(filter->p_sys->maskComplete){
-
-    frequenzStruct* frequenzAreaCo = denoise(N, filter, frequenzArea);
-    // }
+    frequenzStruct* frequenzAreaCo = denoise(n, filter, frequenzArea);
 
 
     // prepare fft
-    frequenzStruct* fftStrTwo = inversion(N, frequenzAreaCo);
+    frequenzStruct* fftStrTwo = inversion(n, frequenzAreaCo);
     // back to time - area
-    frequenzStruct* timeArea = allInOnefft(N, fftStrTwo, 1);
+    frequenzStruct* timeArea = allInOnefft(n, fftStrTwo, 1);
     // reduce the output fo fft
-    frequenzStruct* timeAreaI = overdriveCutOut(N, timeArea);
-    // get denoised data
-    float* temp_bufferFinal = timeAreaI->xr;
-    // set data back to the block 
-    for (unsigned i = sampleSize; i > 0; i--){
-        
+    frequenzStruct* timeAreaI = overdriveCutOut(n, timeArea);
+
+    // window overlapping function
+    float* temp_bufferFinal = windowOverlapping(sampleSize, filter, timeAreaI);
+
+    // set data back to the block
+    for (unsigned i = sampleSize; i > 0; i--) {
+
         // channel = audio track for mono stereo
         float s = *(temp_bufferFinal++);
         // channel stereo
@@ -124,15 +131,6 @@ static block_t* Process (filter_t *filter, block_t *block)
     }
 
     (void) filter;
-    // finish get block back
+    // finish get the block back
     return block;
 }
-
-
-
-
-
-
-
-
-
